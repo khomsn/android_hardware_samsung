@@ -44,7 +44,7 @@ int ril_close(struct ril_handle *ril);
 
 int ril_set_call_volume(struct ril_handle *ril,
                         enum _SoundType sound_type,
-                        float volume);
+                        int volume);
 
 int ril_set_call_audio_path(struct ril_handle *ril,
                             enum _AudioPath path);

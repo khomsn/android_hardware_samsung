@@ -32,35 +32,35 @@
         <!-- Empty path -->
     </path>
 
-    <path name="voice-earpiece">
+    <path name="voice-call-earpiece">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-earpiece-wb">
+    <path name="voice-call-earpiece-wb">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-speaker">
+    <path name="voice-call-speaker">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-speaker-wb">
+    <path name="voice-call-speaker-wb">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-headphones">
+    <path name="voice-call-headphones">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-headphones-wb">
+    <path name="voice-call-headphones-wb">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-bt-sco-headset">
+    <path name="voice-call-bt-sco-headset">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-bt-sco-headset-wb">
+    <path name="voice-call-bt-sco-headset-wb">
         <!-- Empty path -->
     </path>
 
@@ -86,49 +86,49 @@
         <!-- Empty path -->
     </path>
 
-    <path name="voice-mic">
+    <path name="voice-call-mic">
         <!-- Configure builtin mic only -->
         <!-- Empty path -->
     </path>
 
     <!-- Two mic -->
-    <path name="voice-earpiece-mic">
+    <path name="voice-call-earpiece-mic">
         <!-- Should be main mic and back mic -->
         <!-- Capture channel set to main mic -->
         <!-- Empty path -->
     </path>
 
-    <path name="voice-earpiece-mic-wb">
+    <path name="voice-call-earpiece-mic-wb">
         <!-- Should be main mic and back mic -->
         <!-- Capture channel set to main mic -->
         <!-- Empty path -->
     </path>
 
-    <path name="voice-speaker-mic">
+    <path name="voice-call-speaker-mic">
         <!-- Should be main mic and back mic -->
         <!-- Capture channel set to back mic -->
         <!-- Empty path -->
     </path>
 
-    <path name="voice-speaker-mic-wb">
+    <path name="voice-call-speaker-mic-wb">
         <!-- Should be main mic and back mic -->
         <!-- Capture channel set to back mic -->
         <!-- Empty path -->
     </path>
 
-    <path name="voice-headset-mic">
+    <path name="voice-call-headset-mic">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-headset-mic-wb">
+    <path name="voice-call-headset-mic-wb">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-bt-sco-mic">
+    <path name="voice-call-bt-sco-mic">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-bt-sco-mic-wb">
+    <path name="voice-call-bt-sco-mic-wb">
         <!-- Empty path -->
     </path>
 
@@ -140,11 +140,11 @@
         <!-- Empty path -->
     </path>
 
-    <path name="voice-rec-headset-mic">
+    <path name="voice-call-rec-headset-mic">
         <!-- Empty path -->
     </path>
 
-    <path name="voice-rec-mic">
+    <path name="voice-call-rec-mic">
         <!-- Empty path -->
     </path>
 

@@ -41,7 +41,7 @@
 #include <samsung_audio.h>
 
 #include "audio_hw.h"
-#include "sound/compress_params.h"
+#include <sound/compress_params.h>
 
 #define MIXER_CTL_COMPRESS_PLAYBACK_VOLUME "Compress Playback Volume"
 

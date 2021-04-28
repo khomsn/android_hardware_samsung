@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "audio_hw_voice"
+#define LOG_TAG "audio_hw_voice_v4"
 #define LOG_NDEBUG 0
 /*#define VERY_VERY_VERBOSE_LOGGING*/
 #ifdef VERY_VERY_VERBOSE_LOGGING
@@ -26,7 +26,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 
-#include <cutils/log.h>
+#include <log/log.h>
 #include <cutils/properties.h>
 
 #include <samsung_audio.h>
@@ -39,40 +39,58 @@
 #endif
 
 static struct pcm_config pcm_config_voicecall = {
-    .channels = 2,
-    .rate = 8000,
-    .period_size = CAPTURE_PERIOD_SIZE_LOW_LATENCY,
-    .period_count = CAPTURE_PERIOD_COUNT_LOW_LATENCY,
+    .channels = VPCM_DEFAULT_CHANNEL_COUNT,
+    .rate = VPCM_DEFAULT_SAMPLING_RATE,
+    .period_size = VPCM_PERIOD_SIZE,
+    .period_count = VPCM_PERIOD_COUNT,
     .format = PCM_FORMAT_S16_LE,
+    .start_threshold = VPCM_START_THRESHOLD,
+    .stop_threshold = INT_MAX,
+    .avail_min = VPCM_AVAILABLE_MIN,
 };
 
 static struct pcm_config pcm_config_voicecall_wideband = {
-    .channels = 2,
-    .rate = 16000,
-    .period_size = CAPTURE_PERIOD_SIZE_LOW_LATENCY,
-    .period_count = CAPTURE_PERIOD_COUNT_LOW_LATENCY,
+    .channels = VPCM_DEFAULT_CHANNEL_COUNT,
+    .rate = VPCM_WB_SAMPLING_RATE,
+    .period_size = VPCM_PERIOD_SIZE,
+    .period_count = VPCM_PERIOD_COUNT,
     .format = PCM_FORMAT_S16_LE,
+    .start_threshold = VPCM_START_THRESHOLD,
+    .stop_threshold = INT_MAX,
+    .avail_min = VPCM_AVAILABLE_MIN,
 };
 
-struct pcm_config pcm_config_voice_sco = {
-    .channels = 1,
+static struct pcm_config pcm_config_voice_sco = {
+    .channels = SCO_VOICE_CHANNEL_COUNT,
     .rate = SCO_DEFAULT_SAMPLING_RATE,
     .period_size = SCO_PERIOD_SIZE,
     .period_count = SCO_PERIOD_COUNT,
     .format = PCM_FORMAT_S16_LE,
 };
 
-struct pcm_config pcm_config_voice_sco_wb = {
-    .channels = 1,
+static struct pcm_config pcm_config_voice_sco_wb = {
+    .channels = SCO_VOICE_CHANNEL_COUNT,
     .rate = SCO_WB_SAMPLING_RATE,
     .period_size = SCO_PERIOD_SIZE,
     .period_count = SCO_PERIOD_COUNT,
     .format = PCM_FORMAT_S16_LE,
 };
 
-/* Prototypes */
-int start_voice_call(struct audio_device *adev);
-int stop_voice_call(struct audio_device *adev);
+static struct pcm_config pcm_config_voip_sco = {
+    .channels = SCO_VOIP_CHANNEL_COUNT,
+    .rate = SCO_DEFAULT_SAMPLING_RATE,
+    .period_size = SCO_PERIOD_SIZE,
+    .period_count = SCO_PERIOD_COUNT,
+    .format = PCM_FORMAT_S16_LE,
+};
+
+static struct pcm_config pcm_config_voip_sco_wb = {
+    .channels = SCO_VOIP_CHANNEL_COUNT,
+    .rate = SCO_DEFAULT_SAMPLING_RATE,
+    .period_size = SCO_PERIOD_SIZE,
+    .period_count = SCO_PERIOD_COUNT,
+    .format = PCM_FORMAT_S16_LE,
+};
 
 void set_voice_session_audio_path(struct voice_session *session)
 {
@@ -95,6 +113,7 @@ void set_voice_session_audio_path(struct voice_session *session)
         case AUDIO_DEVICE_OUT_BLUETOOTH_SCO:
         case AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET:
         case AUDIO_DEVICE_OUT_BLUETOOTH_SCO_CARKIT:
+        case AUDIO_DEVICE_OUT_ALL_SCO:
             device_type = SOUND_AUDIO_PATH_BLUETOOTH;
             break;
         default:
@@ -141,20 +160,25 @@ void prepare_voice_session(struct voice_session *session,
  */
 void stop_voice_session_bt_sco(struct audio_device *adev) {
     ALOGV("%s: Closing SCO PCMs", __func__);
+    int status = 0;
 
     if (adev->pcm_sco_rx != NULL) {
         pcm_stop(adev->pcm_sco_rx);
         pcm_close(adev->pcm_sco_rx);
         adev->pcm_sco_rx = NULL;
+        status++;
     }
 
     if (adev->pcm_sco_tx != NULL) {
         pcm_stop(adev->pcm_sco_tx);
         pcm_close(adev->pcm_sco_tx);
         adev->pcm_sco_tx = NULL;
+        status++;
     }
+    adev->bt_sco_inuse = false;
+    ALOGV("%s: Successfully closed %d active BT_SCO PCMs", __func__, status);
 
-    /* audio codecs like wm5201 need open modem pcm while using bt sco */
+    /* audio codecs like wm5102 need open modem pcm while using bt sco */
     if (adev->mode != AUDIO_MODE_IN_CALL)
         stop_voice_session(adev->voice.session);
 }
@@ -170,13 +194,22 @@ void start_voice_session_bt_sco(struct audio_device *adev)
     }
 
     ALOGV("%s: Opening SCO PCMs", __func__);
-
-    if (adev->voice.bluetooth_wb) {
-        ALOGV("%s: pcm_config wideband", __func__);
-        voice_sco_config = &pcm_config_voice_sco_wb;
+    if (adev->mode == AUDIO_MODE_IN_CALL){
+        if (adev->voice.bluetooth_wb) {
+            ALOGV("%s: pcm_config wideband for voice", __func__);
+            voice_sco_config = &pcm_config_voice_sco_wb;
+        } else {
+            ALOGV("%s: pcm_config narrowband for voice", __func__);
+            voice_sco_config = &pcm_config_voice_sco;
+        }
     } else {
-        ALOGV("%s: pcm_config narrowband", __func__);
-        voice_sco_config = &pcm_config_voice_sco;
+        if (adev->voice.bluetooth_wb) {
+            ALOGV("%s: pcm_config wideband for voip", __func__);
+            voice_sco_config = &pcm_config_voip_sco_wb;
+        } else {
+            ALOGV("%s: pcm_config narrowband for voip", __func__);
+            voice_sco_config = &pcm_config_voip_sco;
+        }
     }
 
     adev->pcm_sco_rx = pcm_open(SOUND_CARD,
@@ -202,9 +235,15 @@ void start_voice_session_bt_sco(struct audio_device *adev)
     pcm_start(adev->pcm_sco_rx);
     pcm_start(adev->pcm_sco_tx);
 
-    /* audio codecs like wm5201 need open modem pcm while using bt sco */
-    if (adev->mode != AUDIO_MODE_IN_CALL)
+    adev->bt_sco_inuse = true;
+    /* audio codecs like wm5102 need open modem pcm while using bt sco */
+    /* do start voice modem after
+     * set output devices to prevent 
+     * no modem sound out
+     */
+    if (adev->mode != AUDIO_MODE_IN_CALL){
         start_voice_session(adev->voice.session);
+    }
 
     return;
 
@@ -219,13 +258,13 @@ err_sco_rx:
  * This function must be called with hw device mutex locked, OK to hold other
  * mutexes
  */
-int start_voice_session(struct voice_session *session)
+void start_voice_session(struct voice_session *session)
 {
     struct pcm_config *voice_config;
 
     if (session->pcm_voice_rx != NULL || session->pcm_voice_tx != NULL) {
         ALOGW("%s: Voice PCMs already open!\n", __func__);
-        return 0;
+        return;
     }
 
     ALOGV("%s: Opening voice PCMs", __func__);
@@ -249,10 +288,10 @@ int start_voice_session(struct voice_session *session)
               __func__,
               pcm_get_error(session->pcm_voice_rx));
 
-        pcm_close(session->pcm_voice_tx);
-        session->pcm_voice_tx = NULL;
+        pcm_close(session->pcm_voice_rx);
+        session->pcm_voice_rx = NULL;
 
-        return -ENOMEM;
+        return;
     }
 
     session->pcm_voice_tx = pcm_open(SOUND_CARD,
@@ -264,10 +303,10 @@ int start_voice_session(struct voice_session *session)
               __func__,
               pcm_get_error(session->pcm_voice_tx));
 
-        pcm_close(session->pcm_voice_rx);
-        session->pcm_voice_rx = NULL;
+        pcm_close(session->pcm_voice_tx);
+        session->pcm_voice_tx = NULL;
 
-        return -ENOMEM;
+        return;
     }
 
     pcm_start(session->pcm_voice_rx);
@@ -286,7 +325,7 @@ int start_voice_session(struct voice_session *session)
         ril_set_two_mic_control(&session->ril, AUDIENCE, TWO_MIC_SOLUTION_OFF);
     }
 
-    return 0;
+    return;
 }
 
 /*
@@ -322,10 +361,10 @@ void stop_voice_session(struct voice_session *session)
 
     session->out_device = AUDIO_DEVICE_NONE;
 
-    ALOGV("%s: Successfully closed %d active PCMs", __func__, status);
+    ALOGV("%s: Successfully closed %d active Voice PCMs", __func__, status);
 }
 
-void set_voice_session_volume(struct voice_session *session, float volume)
+void set_voice_session_volume(struct voice_session *session, int volume)
 {
     enum _SoundType sound_type;
 
@@ -349,7 +388,7 @@ void set_voice_session_volume(struct voice_session *session, float volume)
         default:
             sound_type = SOUND_TYPE_VOICE;
     }
-
+    ALOGV("%s: Set voice volume on %d to %d", __func__, sound_type, volume);
     ril_set_call_volume(&session->ril, sound_type, volume);
 }
 
@@ -402,8 +441,8 @@ static void voice_session_wb_amr_callback(void *data, int wb_amr_type)
              * We need stop the PCM and start with the
              * wide band pcm_config.
              */
-            stop_voice_call(adev);
-            start_voice_call(adev);
+            stop_voice_session(adev->voice.session);
+            start_voice_session(adev->voice.session);
         }
     }
 

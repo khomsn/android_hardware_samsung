@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "audio_hw_ril"
+#define LOG_TAG "audio_hw_ril_V2"
 /*#define LOG_NDEBUG 0*/
 
 #include <errno.h>
@@ -23,12 +23,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <utils/Log.h>
+#include <log/log.h>
 #include <cutils/properties.h>
 
 #include "ril_interface.h"
 
-#define VOLUME_STEPS_DEFAULT  "5"
+#define VOLUME_STEPS_DEFAULT  "25"
 #define VOLUME_STEPS_PROPERTY "ro.config.vc_call_vol_steps"
 
 /* Audio WB AMR callback */
@@ -97,7 +97,7 @@ static int ril_connect_if_required(struct ril_handle *ril)
 
 int ril_open(struct ril_handle *ril)
 {
-    char property[PROPERTY_VALUE_MAX];
+    char volume_steps[PROPERTY_VALUE_MAX];
 
     if (ril == NULL) {
         return -1;
@@ -109,8 +109,8 @@ int ril_open(struct ril_handle *ril)
         return -1;
     }
 
-    property_get(VOLUME_STEPS_PROPERTY, property, VOLUME_STEPS_DEFAULT);
-    ril->volume_steps_max = atoi(property);
+    property_get(VOLUME_STEPS_PROPERTY, volume_steps, VOLUME_STEPS_DEFAULT);
+    ril->volume_steps_max = atoi(volume_steps);
 
     /*
      * This catches the case where VOLUME_STEPS_PROPERTY does not contain
@@ -180,7 +180,7 @@ int ril_set_wb_amr_callback(struct ril_handle *ril,
 
 int ril_set_call_volume(struct ril_handle *ril,
                         enum _SoundType sound_type,
-                        float volume)
+                        int volume)
 {
     int rc;
 
@@ -189,14 +189,13 @@ int ril_set_call_volume(struct ril_handle *ril,
         ALOGE("%s: Failed to connect to RIL (%s)", __func__, strerror(rc));
         return 0;
     }
-
-    rc = SetCallVolume(ril->client,
-                       sound_type,
-                       (int)(volume * ril->volume_steps_max));
+       
+    rc = SetCallVolume(ril->client, sound_type, volume);
+    
     if (rc != 0) {
         ALOGE("%s: SetCallVolume() failed, rc=%d", __func__, rc);
     }
-
+    ALOGV("%s: SetCallVolume() on %d to %d", __func__, sound_type, volume);
     return rc;
 }
 
