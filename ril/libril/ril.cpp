@@ -192,11 +192,11 @@ static UserCallbackInfo * internalRequestTimedCallback
 
 /** Index == requestNumber */
 static CommandInfo s_commands[] = {
-#include "ril_commands.h"
+#include <ril_commands.h>
 };
 
 static UnsolResponseInfo s_unsolResponses[] = {
-#include "ril_unsol_commands.h"
+#include <ril_unsol_commands.h>
 };
 
 static CommandInfo s_commands_v[] = {
@@ -242,6 +242,11 @@ addRequestToList(int serial, int slotId, int request) {
 #endif
 
     CommandInfo *pCI = NULL;
+/*
+    if (request >= (int)NUM_ELEMS(s_commands)) {
+        RLOGE("Request %s not supported", requestToString(request));
+        return NULL;
+*/
     if (request > RIL_OEM_REQUEST_BASE) {
         int index = request - RIL_OEM_REQUEST_BASE;
         RLOGD("processCommandBuffer: samsung request=%d, index=%d",
@@ -260,6 +265,7 @@ addRequestToList(int serial, int slotId, int request) {
     }
 
     pRI->token = serial;
+    //pRI->pCI = &(s_commands[request]);
     pRI->pCI = pCI;
     pRI->socket_id = socket_id;
 
@@ -309,6 +315,10 @@ static void processWakeupCallback(int fd, short flags, void *param) {
 }
 
 static void resendLastNITZTimeData(RIL_SOCKET_ID socket_id) {
+    if (s_lastNITZTimeData != NULL) {
+        int responseType = (s_callbacks.version >= 13)
+                           ? RESPONSE_UNSOLICITED_ACK_EXP
+                           : RESPONSE_UNSOLICITED;
         // acquire read lock for the service before calling nitzTimeReceivedInd() since it reads
         // nitzTimeReceived in ril_service
         pthread_rwlock_t *radioServiceRwlockPtr = radio::getRadioServiceRwlock(
@@ -316,10 +326,6 @@ static void resendLastNITZTimeData(RIL_SOCKET_ID socket_id) {
         int rwlockRet = pthread_rwlock_rdlock(radioServiceRwlockPtr);
         assert(rwlockRet == 0);
 
-    if (s_lastNITZTimeData != NULL) {
-        int responseType = (s_callbacks.version >= 13)
-                           ? RESPONSE_UNSOLICITED_ACK_EXP
-                           : RESPONSE_UNSOLICITED;
         int ret = radio::nitzTimeReceivedInd(
             (int)socket_id, responseType, 0,
             RIL_E_SUCCESS, s_lastNITZTimeData, s_lastNITZTimeDataSize);
@@ -817,6 +823,8 @@ void RIL_onUnsolicitedResponse(int unsolResponse, const void *data,
                 pRI == s_unsolResponses ? "AOSP" : "Samsung", unsolResponseIndex);
     }
 
+/*    if ((unsolResponseIndex < 0)
+        || (unsolResponseIndex >= (int32_t)NUM_ELEMS(s_unsolResponses))) {*/
     if (pRI == NULL || pRI->responseFunction == NULL) {
         RLOGE("unsupported unsolicited response code %d", unsolResponse);
         return;
@@ -825,6 +833,7 @@ void RIL_onUnsolicitedResponse(int unsolResponse, const void *data,
     // Grab a wake lock if needed for this reponse,
     // as we exit we'll either release it immediately
     // or set a timer to release it later.
+    //switch (s_unsolResponses[unsolResponseIndex].wakeType) {
     switch (pRI->wakeType) {
         case WAKE_PARTIAL:
             grabPartialWakeLock();
@@ -842,6 +851,7 @@ void RIL_onUnsolicitedResponse(int unsolResponse, const void *data,
 
     int responseType;
     if (s_callbacks.version >= 13
+                /*&& s_unsolResponses[unsolResponseIndex].wakeType == WAKE_PARTIAL) {*/
                 && pRI->wakeType == WAKE_PARTIAL) {
         responseType = RESPONSE_UNSOLICITED_ACK_EXP;
     } else {
@@ -861,9 +871,14 @@ void RIL_onUnsolicitedResponse(int unsolResponse, const void *data,
         assert(rwlockRet == 0);
     }
 
-    ret = pRI->responseFunction(
+/*    
+    if (s_unsolResponses[unsolResponseIndex].responseFunction) {
+        ret = s_unsolResponses[unsolResponseIndex].responseFunction(*/
+    if (pRI->responseFunction) {
+        ret = pRI->responseFunction(
             (int) soc_id, responseType, 0, RIL_E_SUCCESS, const_cast<void*>(data),
             datalen);
+    }
 
     rwlockRet = pthread_rwlock_unlock(radioServiceRwlockPtr);
     assert(rwlockRet == 0);
@@ -886,7 +901,7 @@ void RIL_onUnsolicitedResponse(int unsolResponse, const void *data,
     }
 
 #if VDBG
-    RLOGI("%s UNSOLICITED: %s length:%d", rilSocketIdToString(soc_id),
+    RLOGI("%s UNSOLICITED: %s length:%zu", rilSocketIdToString(soc_id),
             requestToString(unsolResponse), datalen);
 #endif
 
@@ -1229,6 +1244,7 @@ requestToString(int request) {
         case RIL_REQUEST_GET_ACTIVITY_INFO: return "GET_ACTIVITY_INFO";
         case RIL_REQUEST_SET_CARRIER_RESTRICTIONS: return "SET_CARRIER_RESTRICTIONS";
         case RIL_REQUEST_GET_CARRIER_RESTRICTIONS: return "GET_CARRIER_RESTRICTIONS";
+        case RIL_REQUEST_SET_CARRIER_INFO_IMSI_ENCRYPTION: return "SET_CARRIER_INFO_IMSI_ENCRYPTION";
         case RIL_RESPONSE_ACKNOWLEDGEMENT: return "RESPONSE_ACKNOWLEDGEMENT";
         case RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED: return "UNSOL_RESPONSE_RADIO_STATE_CHANGED";
         case RIL_UNSOL_RESPONSE_CALL_STATE_CHANGED: return "UNSOL_RESPONSE_CALL_STATE_CHANGED";
@@ -1274,6 +1290,7 @@ requestToString(int request) {
         case RIL_UNSOL_DC_RT_INFO_CHANGED: return "UNSOL_DC_RT_INFO_CHANGED";
         case RIL_UNSOL_RADIO_CAPABILITY: return "UNSOL_RADIO_CAPABILITY";
         case RIL_UNSOL_MODEM_RESTART: return "UNSOL_MODEM_RESTART";
+        case RIL_UNSOL_CARRIER_INFO_IMSI_ENCRYPTION: return "UNSOL_CARRIER_INFO_IMSI_ENCRYPTION";
         case RIL_UNSOL_ON_SS: return "UNSOL_ON_SS";
         case RIL_UNSOL_STK_CC_ALPHA_NOTIFY: return "UNSOL_STK_CC_ALPHA_NOTIFY";
         case RIL_UNSOL_LCEDATA_RECV: return "UNSOL_LCEDATA_RECV";
