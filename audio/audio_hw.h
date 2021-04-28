@@ -33,13 +33,7 @@
 #define RETRY_NUMBER 10
 #define RETRY_US 500000
 
-#ifdef __LP64__
-#define OFFLOAD_FX_LIBRARY_PATH "/system/lib64/soundfx/libnvvisualizer.so"
-#else
-#define OFFLOAD_FX_LIBRARY_PATH "/system/lib/soundfx/libnvvisualizer.so"
-#endif
-
-#ifdef PREPROCESSING_ENABLED
+#if PREPROCESSING_ENABLED
 #include <audio_utils/echo_reference.h>
 #define MAX_PREPROCESSORS 3
 struct effect_info_s {
@@ -128,13 +122,24 @@ enum {
 
 #define SCO_PERIOD_SIZE 168
 #define SCO_PERIOD_COUNT 2
-#define SCO_DEFAULT_CHANNEL_COUNT 2
+#define SCO_VOIP_CHANNEL_COUNT 1
+#define SCO_VOICE_CHANNEL_COUNT 2
 #define SCO_DEFAULT_SAMPLING_RATE 8000
 #define SCO_WB_SAMPLING_RATE 16000
 #define SCO_START_THRESHOLD 335
 #define SCO_STOP_THRESHOLD 336
 #define SCO_AVAILABLE_MIN 1
 
+#define VPCM_PERIOD_SIZE 256
+#define VPCM_PERIOD_COUNT 2
+#define VPCM_DEFAULT_CHANNEL_COUNT 2
+#define VPCM_DEFAULT_SAMPLING_RATE 8000
+#define VPCM_WB_SAMPLING_RATE 16000
+#define VPCM_START_THRESHOLD 0
+#define VPCM_STOP_THRESHOLD INT_MAX
+#define VPCM_AVAILABLE_MIN 1
+
+#if 0
 #define PLAYBACK_HDMI_MULTI_PERIOD_SIZE  1024
 #define PLAYBACK_HDMI_MULTI_PERIOD_COUNT 4
 #define PLAYBACK_HDMI_MULTI_DEFAULT_CHANNEL_COUNT 6
@@ -145,6 +150,7 @@ enum {
 #define PLAYBACK_HDMI_MULTI_AVAILABLE_MIN 1
 
 #define PLAYBACK_HDMI_DEFAULT_CHANNEL_COUNT   2
+#endif
 
 #define CAPTURE_PERIOD_SIZE 1024
 #define CAPTURE_PERIOD_SIZE_LOW_LATENCY 256
@@ -186,6 +192,7 @@ typedef enum {
     USECASE_AUDIO_CAPTURE,
 
     USECASE_VOICE_CALL,
+    USECASE_VOIP_CALL,
     AUDIO_USECASE_MAX
 } audio_usecase_t;
 
@@ -218,6 +225,7 @@ typedef enum {
     PCM_PLAYBACK = 0x1,
     PCM_CAPTURE = 0x2,
     VOICE_CALL = 0x4,
+    VOICE_COMMUNICATION = 0x7,
     PCM_CAPTURE_LOW_LATENCY = 0x10,
 } usecase_type_t;
 
@@ -251,7 +259,7 @@ struct stream_out {
     struct listnode             pcm_dev_list;
     struct compr_config         compr_config;
     struct compress*            compr;
-    int                         standby;
+    bool                        standby;
     unsigned int                sample_rate;
     audio_channel_mask_t        channel_mask;
     audio_format_t              format;
@@ -279,7 +287,7 @@ struct stream_out {
 
     struct audio_device*        dev;
 
-#ifdef PREPROCESSING_ENABLED
+#if PREPROCESSING_ENABLED
     struct echo_reference_itfe *echo_reference;
     // echo_reference_generation indicates if the echo reference used by the output stream is
     // in sync with the one known by the audio_device. When different from the generation stored
@@ -300,13 +308,14 @@ struct stream_in {
                                                      capture thread */
     struct pcm_config                   config;
     struct listnode                     pcm_dev_list;
-    int                                 standby;
+    bool                                standby;
     audio_source_t                      source;
     audio_devices_t                     devices;
     uint32_t                            main_channels;
     audio_usecase_t                     usecase;
     usecase_type_t                      usecase_type;
     bool                                enable_aec;
+    bool                                stream_opened;
     audio_input_flags_t                 input_flags;
 
     /* TODO: remove resampler if possible when AudioFlinger supports downsampling from 48 to 8 */
@@ -323,7 +332,7 @@ struct stream_in {
     size_t proc_buf_size;
     size_t proc_buf_frames;
 
-#ifdef PREPROCESSING_ENABLED
+#if PREPROCESSING_ENABLED
     struct echo_reference_itfe *echo_reference;
     int16_t *ref_buf;
     size_t ref_buf_size;
@@ -365,7 +374,7 @@ struct audio_usecase {
 
 struct voice_data {
     bool  in_call;
-    float volume;
+    int   volume;
     bool  bluetooth_nrec;
     bool  bluetooth_wb;
     struct voice_session *session;
@@ -376,12 +385,24 @@ struct audio_device {
     pthread_mutex_t         lock; /* see note below on mutex acquisition order */
     struct listnode         mixer_list;
     audio_mode_t            mode;
+    audio_mode_t            prev_mode;
     struct stream_in*       active_input;
     struct stream_out*      primary_output;
     bool                    mic_mute;
     bool                    screen_off;
+    bool                    voip;
+    bool                    path_changed;
+    bool                    in_pcm_opened;
+    bool                    out_pcm_opened;
+    bool                    adev_restart;
+    bool                    out_streaming;
+    bool                    in_streaming;
 
     bool                    bt_sco_active;
+    bool                    bt_a2dp_spd;
+    bool                    bt_sco_ready;
+    bool                    bt_hs_ready;
+    bool                    bt_sco_inuse;
     struct pcm              *pcm_sco_rx;
     struct pcm              *pcm_sco_tx;
 
@@ -397,7 +418,7 @@ struct audio_device {
     int                     (*offload_fx_start_output)(audio_io_handle_t);
     int                     (*offload_fx_stop_output)(audio_io_handle_t);
 
-#ifdef PREPROCESSING_ENABLED
+#if PREPROCESSING_ENABLED
     struct echo_reference_itfe* echo_reference;
     // echo_reference_generation indicates if the echo reference used by the output stream is
     // in sync with the one known by the audio_device.
