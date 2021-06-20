@@ -2591,7 +2591,6 @@ static int start_voice_call(struct audio_device *adev)
 {
     ALOGV("%s: enter", __func__);
     struct audio_usecase *uc_info;
-    struct stream_in *in = NULL;
     int ret = 0;
 
     uc_info = (struct audio_usecase *)calloc(1, sizeof(struct audio_usecase));
@@ -2633,12 +2632,6 @@ static int start_voice_call(struct audio_device *adev)
     }
 
     adev->voice.in_call = true;
-    /* Force in standby ,  wait for recording*/
-    if (!in->standby) {
-        lock_input_stream(in);
-        do_in_standby_l(in);
-        pthread_mutex_unlock(&in->lock);
-    }
 
 exit:
     ALOGV("%s: exit", __func__);
