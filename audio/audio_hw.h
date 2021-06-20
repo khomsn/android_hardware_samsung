@@ -67,6 +67,7 @@ enum {
     SND_DEVICE_OUT_VOICE_BT_SCO_WB,
     SND_DEVICE_OUT_HDMI,
     SND_DEVICE_OUT_SPEAKER_AND_HDMI,
+    SND_DEVICE_OUT_SPEAKER_AND_ALL_SCO,
     SND_DEVICE_OUT_BT_SCO,
     SND_DEVICE_OUT_END,
 
@@ -112,21 +113,21 @@ enum {
  * the buffer size of an input/output stream
  */
 #define PLAYBACK_PERIOD_SIZE 256
-#define PLAYBACK_PERIOD_COUNT 2
+#define PLAYBACK_PERIOD_COUNT 8
 #define PLAYBACK_DEFAULT_CHANNEL_COUNT 2
 #define PLAYBACK_DEFAULT_SAMPLING_RATE 48000
-#define PLAYBACK_START_THRESHOLD(size, count) (((size) * (count)) - 1)
-#define PLAYBACK_STOP_THRESHOLD(size, count) ((size) * ((count) + 2))
+#define PLAYBACK_START_THRESHOLD(size, count) (((size) * (count) / 4) + 1 )
+#define PLAYBACK_STOP_THRESHOLD(size, count) ((size) * (count))
 #define PLAYBACK_AVAILABLE_MIN 1
 
 
-#define SCO_PERIOD_SIZE 168
+#define SCO_PERIOD_SIZE 256
 #define SCO_PERIOD_COUNT 2
-#define SCO_VOIP_CHANNEL_COUNT 1
+#define SCO_VOIP_CHANNEL_COUNT 2
 #define SCO_VOICE_CHANNEL_COUNT 2
 #define SCO_DEFAULT_SAMPLING_RATE 8000
 #define SCO_WB_SAMPLING_RATE 16000
-#define SCO_START_THRESHOLD 335
+#define SCO_START_THRESHOLD 0
 #define SCO_STOP_THRESHOLD 336
 #define SCO_AVAILABLE_MIN 1
 
@@ -167,8 +168,8 @@ enum {
 #define COMPRESS_PLAYBACK_VOLUME_MAX 0x10000 //NV suggested value
 
 #define DEEP_BUFFER_OUTPUT_SAMPLING_RATE 48000
-#define DEEP_BUFFER_OUTPUT_PERIOD_SIZE 480
-#define DEEP_BUFFER_OUTPUT_PERIOD_COUNT 8
+#define DEEP_BUFFER_OUTPUT_PERIOD_SIZE 256
+#define DEEP_BUFFER_OUTPUT_PERIOD_COUNT 16
 
 #define MAX_SUPPORTED_CHANNEL_MASKS 2
 
@@ -390,16 +391,20 @@ struct audio_device {
     bool                    screen_off;
     bool                    voip;
     bool                    path_changed;
+    bool                    mode_changed;
     bool                    in_pcm_opened;
     bool                    out_pcm_opened;
     bool                    adev_restart;
     bool                    out_streaming;
     bool                    in_streaming;
 
+    bool                    AEC_enable;
+    bool                    AEC_active;
     bool                    bt_sco_active;
     bool                    bt_a2dp_spd;
     bool                    bt_sco_ready;
     bool                    bt_hs_ready;
+    bool                    hs_pluged;
     bool                    bt_sco_inuse;
     struct pcm              *pcm_sco_rx;
     struct pcm              *pcm_sco_tx;

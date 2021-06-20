@@ -17,7 +17,7 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "audio_hw_primary_V27.6"
+#define LOG_TAG "audio_hw_primary_V28.1"
 #define LOG_NDEBUG 0
 /*#define VERY_VERY_VERBOSE_LOGGING*/
 #ifdef VERY_VERY_VERBOSE_LOGGING
@@ -65,6 +65,8 @@ static struct pcm_device_profile pcm_device_playback = {
         .start_threshold = PLAYBACK_START_THRESHOLD(PLAYBACK_PERIOD_SIZE, PLAYBACK_PERIOD_COUNT),
         .stop_threshold = PLAYBACK_STOP_THRESHOLD(PLAYBACK_PERIOD_SIZE, PLAYBACK_PERIOD_COUNT),
         .silence_threshold = 0,
+        .silence_size = UINT_MAX,
+        .avail_min = PLAYBACK_AVAILABLE_MIN,
     },
     .card = SOUND_CARD,
     .id = SOUND_PLAYBACK_DEVICE,
@@ -80,8 +82,8 @@ static struct pcm_device_profile pcm_device_deep_buffer = {
         .period_size = DEEP_BUFFER_OUTPUT_PERIOD_SIZE,
         .period_count = DEEP_BUFFER_OUTPUT_PERIOD_COUNT,
         .format = PCM_FORMAT_S16_LE,
-        .start_threshold = DEEP_BUFFER_OUTPUT_PERIOD_SIZE / 4,
-        .stop_threshold = INT_MAX,
+        .start_threshold = PLAYBACK_START_THRESHOLD(PLAYBACK_PERIOD_SIZE, PLAYBACK_PERIOD_COUNT),
+        .stop_threshold = PLAYBACK_STOP_THRESHOLD(PLAYBACK_PERIOD_SIZE, PLAYBACK_PERIOD_COUNT),
     },
     .card = SOUND_CARD,
     .id = SOUND_DEEP_BUFFER_DEVICE,
@@ -358,6 +360,7 @@ static const char * const device_table[SND_DEVICE_MAX] = {
     [SND_DEVICE_OUT_VOICE_BT_SCO_WB] = "voice-call-bt-sco-headset-wb",
     [SND_DEVICE_OUT_HDMI] = "hdmi",
     [SND_DEVICE_OUT_SPEAKER_AND_HDMI] = "speaker-and-hdmi",
+    [SND_DEVICE_OUT_SPEAKER_AND_ALL_SCO] = "speaker-and-bt-sco-headset",
     [SND_DEVICE_OUT_BT_SCO] = "bt-sco-headset",
 
     /* Capture sound devices */
@@ -589,20 +592,9 @@ static snd_device_t get_output_snd_device(struct audio_device *adev, audio_devic
     }
 
     if (mode == AUDIO_MODE_IN_CALL) {
-        if (devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
-            devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
-            snd_device = SND_DEVICE_OUT_VOICE_HEADPHONES;
-        } else if (devices & AUDIO_DEVICE_OUT_ALL_SCO) {
-            snd_device = SND_DEVICE_OUT_VOICE_BT_SCO;
-        } else if (devices & AUDIO_DEVICE_OUT_SPEAKER) {
-            snd_device = SND_DEVICE_OUT_VOICE_SPEAKER;
-        } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
-            snd_device = SND_DEVICE_OUT_VOICE_EARPIECE;
-        }
-
         if (voice_session_uses_wideband(adev->voice.session)) {
-            if (devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
-                devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
+            if ((devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
+                devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) && adev->hs_pluged) {
                 snd_device = SND_DEVICE_OUT_VOICE_HEADPHONES_WB;
             } else if (devices & AUDIO_DEVICE_OUT_ALL_SCO) {
                 snd_device = SND_DEVICE_OUT_VOICE_BT_SCO_WB;
@@ -611,64 +603,61 @@ static snd_device_t get_output_snd_device(struct audio_device *adev, audio_devic
             } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
                 snd_device = SND_DEVICE_OUT_VOICE_EARPIECE_WB;
             }
+        } else {
+            if ((devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
+                devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) && adev->hs_pluged) {
+                snd_device = SND_DEVICE_OUT_VOICE_HEADPHONES;
+            } else if (devices & AUDIO_DEVICE_OUT_ALL_SCO) {
+                snd_device = SND_DEVICE_OUT_VOICE_BT_SCO;
+            } else if (devices & AUDIO_DEVICE_OUT_SPEAKER) {
+                snd_device = SND_DEVICE_OUT_VOICE_SPEAKER;
+            } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
+                snd_device = SND_DEVICE_OUT_VOICE_EARPIECE;
+            }
         }
-
-        if (snd_device != SND_DEVICE_NONE) {
-            goto exit;
-        }
-    }
-
-    if (mode == AUDIO_MODE_IN_COMMUNICATION) {
-        if (devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
-            devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
+    } else if (mode == AUDIO_MODE_IN_COMMUNICATION || adev->voip) {
+        if ((devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
+            devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) && adev->hs_pluged) {
             snd_device = SND_DEVICE_OUT_HEADPHONES;
         } else if (devices & AUDIO_DEVICE_OUT_ALL_SCO && adev->bt_sco_ready) {
             snd_device = SND_DEVICE_OUT_BT_SCO;
-        } else if (devices & AUDIO_DEVICE_OUT_SPEAKER) {
-            snd_device = SND_DEVICE_OUT_SPEAKER;
         } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
             snd_device = SND_DEVICE_OUT_EARPIECE;
+        } else { /*********** default to speaker *****/
+            snd_device = SND_DEVICE_OUT_SPEAKER;
         }
-
-        if (snd_device != SND_DEVICE_NONE) {
-            goto exit;
-        }
-    }
-
-    if (popcount(devices) == 2) {
-        if (devices == (AUDIO_DEVICE_OUT_WIRED_HEADPHONE |
-                        AUDIO_DEVICE_OUT_SPEAKER)) {
-            snd_device = SND_DEVICE_OUT_SPEAKER_AND_HEADPHONES;
-        } else if (devices == (AUDIO_DEVICE_OUT_WIRED_HEADSET |
-                               AUDIO_DEVICE_OUT_SPEAKER)) {
-            snd_device = SND_DEVICE_OUT_SPEAKER_AND_HEADPHONES;
+    } else { /*** other audio mode ****/
+        if (popcount(devices) == 2) {
+            if (devices == (AUDIO_DEVICE_OUT_WIRED_HEADPHONE |
+                            AUDIO_DEVICE_OUT_SPEAKER)) {
+                snd_device = SND_DEVICE_OUT_SPEAKER_AND_HEADPHONES;
+            } else if (devices == (AUDIO_DEVICE_OUT_WIRED_HEADSET |
+                                AUDIO_DEVICE_OUT_SPEAKER)){
+                snd_device = SND_DEVICE_OUT_SPEAKER_AND_HEADPHONES;
+            } else if ((devices & AUDIO_DEVICE_OUT_SPEAKER) && (devices &  AUDIO_DEVICE_OUT_ALL_SCO) && adev->bt_sco_ready) {
+                snd_device = SND_DEVICE_OUT_SPEAKER_AND_ALL_SCO;
+            } else if (devices & AUDIO_DEVICE_OUT_SPEAKER) {
+                snd_device = SND_DEVICE_OUT_SPEAKER;
+            } else {
+                ALOGE("%s: Invalid combo device(%#x)", __func__, devices);
+                goto exit;
+            }
         } else {
-            ALOGE("%s: Invalid combo device(%#x)", __func__, devices);
-            goto exit;
+            if ((devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
+                devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) && adev->hs_pluged) {
+                snd_device = SND_DEVICE_OUT_HEADPHONES;
+            } else if (devices & AUDIO_DEVICE_OUT_SPEAKER) {
+                snd_device = SND_DEVICE_OUT_SPEAKER;
+            } else if (devices & AUDIO_DEVICE_OUT_ALL_SCO && adev->bt_sco_ready) {
+                snd_device = SND_DEVICE_OUT_BT_SCO;
+            } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
+                snd_device = SND_DEVICE_OUT_EARPIECE;
+            } else {
+                ALOGE("%s: Unknown device(s) %#x", __func__, devices);
+                ALOGD("%s: Set to default SPK", __func__);
+                snd_device = SND_DEVICE_OUT_SPEAKER;
+            }
         }
-        if (snd_device != SND_DEVICE_NONE) {
-            goto exit;
-        }
-    }
-/* no need to check for popcount !=1 just apply posible path
-    if (popcount(devices) != 1 && devices != AUDIO_DEVICE_OUT_ALL_SCO) {
-        ALOGE("%s: Invalid output devices(%#x)", __func__, devices);
-        goto exit;
-    }
-*/
-    if (devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
-        devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
-        snd_device = SND_DEVICE_OUT_HEADPHONES;
-    } else if (devices & AUDIO_DEVICE_OUT_SPEAKER) {
-        snd_device = SND_DEVICE_OUT_SPEAKER;
-    } else if (devices & AUDIO_DEVICE_OUT_ALL_SCO && (adev->bt_sco_ready || adev->voip)) {
-        snd_device = SND_DEVICE_OUT_BT_SCO;
-    } else if (devices & AUDIO_DEVICE_OUT_EARPIECE) {
-        snd_device = SND_DEVICE_OUT_EARPIECE;
-    } else {
-        ALOGE("%s: Unknown device(s) %#x", __func__, devices);
-        ALOGD("%s: Set to default SPK", __func__);
-        snd_device = SND_DEVICE_OUT_SPEAKER;
     }
 exit:
     ALOGV("%s: exit: snd_device(%s)", __func__, device_table[snd_device]);
@@ -703,65 +692,53 @@ static snd_device_t get_input_snd_device(struct audio_device *adev, audio_device
     if (mode == AUDIO_MODE_IN_CALL) {
         if (out_device == AUDIO_DEVICE_NONE) {
             ALOGE("%s: No output device set for voice call, Set to default", __func__);
-            snd_device = SND_DEVICE_IN_VOICE_SPEAKER_MIC;
+            snd_device = SND_DEVICE_IN_VOICE_MIC;
             goto exit;
         }
 
-        snd_device = SND_DEVICE_IN_VOICE_MIC;
-        if (out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
-            snd_device = SND_DEVICE_IN_VOICE_HEADSET_MIC;
-        }
-
-        if (voice_session_uses_twomic(adev->voice.session)) {
+        if (voice_session_uses_wideband(adev->voice.session)) {
             if (out_device & AUDIO_DEVICE_OUT_EARPIECE ||
                 out_device & AUDIO_DEVICE_OUT_WIRED_HEADPHONE) {
+                snd_device = SND_DEVICE_IN_VOICE_EARPIECE_MIC_WB;
+            } else if ((out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) && adev->hs_pluged) {
+                snd_device = SND_DEVICE_IN_VOICE_HEADSET_MIC_WB;
+            } else if (out_device & AUDIO_DEVICE_OUT_ALL_SCO) {
+                snd_device = SND_DEVICE_IN_VOICE_BT_SCO_MIC_WB;
+            } else if (out_device & AUDIO_DEVICE_OUT_SPEAKER) {
+                snd_device = SND_DEVICE_IN_VOICE_SPEAKER_MIC_WB;
+            }
+        } else {
+            if ((out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) && adev->hs_pluged) {
+                snd_device = SND_DEVICE_IN_VOICE_HEADSET_MIC;
+            } else if (out_device & AUDIO_DEVICE_OUT_EARPIECE ||
+                out_device & AUDIO_DEVICE_OUT_WIRED_HEADPHONE) {
                 snd_device = SND_DEVICE_IN_VOICE_EARPIECE_MIC;
+            } else if (out_device & AUDIO_DEVICE_OUT_ALL_SCO) {
+                snd_device = SND_DEVICE_IN_VOICE_BT_SCO_MIC;
             } else if (out_device & AUDIO_DEVICE_OUT_SPEAKER) {
                 snd_device = SND_DEVICE_IN_VOICE_SPEAKER_MIC;
             }
         }
-
-        if (voice_session_uses_wideband(adev->voice.session)) {
-            if (out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
-                snd_device = SND_DEVICE_IN_VOICE_HEADSET_MIC_WB;
-            }
-
-            if (voice_session_uses_twomic(adev->voice.session)) {
-                if (out_device & AUDIO_DEVICE_OUT_EARPIECE ||
-                    out_device & AUDIO_DEVICE_OUT_WIRED_HEADPHONE) {
-                    snd_device = SND_DEVICE_IN_VOICE_EARPIECE_MIC_WB;
-                } else if (out_device & AUDIO_DEVICE_OUT_SPEAKER) {
-                    snd_device = SND_DEVICE_IN_VOICE_SPEAKER_MIC_WB;
-                }
-            }
-        }
-
-        /* BT SCO */
-        if (out_device & AUDIO_DEVICE_OUT_ALL_SCO) {
-
-            if (voice_session_uses_wideband(adev->voice.session)) {
-                    snd_device = SND_DEVICE_IN_VOICE_BT_SCO_MIC_WB;
-            } else {
-                    snd_device = SND_DEVICE_IN_VOICE_BT_SCO_MIC;
-            }
-        }
         /* no AEC for voice call yet */
-    } else {
-        if (source == AUDIO_SOURCE_VOICE_COMMUNICATION) {
-            /* set default snd_device */
+    } else if (mode == AUDIO_MODE_IN_COMMUNICATION 
+        || adev->voip 
+        || source == AUDIO_SOURCE_VOICE_COMMUNICATION 
+        || in_device & AUDIO_DEVICE_IN_COMMUNICATION) {
+        /* set default snd_device */
+        snd_device = SND_DEVICE_IN_SPEAKER_MIC_AEC;
+        //adev->AEC_enable = false;
+        if ((out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) && adev->hs_pluged ) {
+            snd_device = SND_DEVICE_IN_HEADSET_MIC_AEC;
+        } else if (out_device & AUDIO_DEVICE_OUT_ALL_SCO && adev->bt_sco_ready) {
+            snd_device = SND_DEVICE_IN_BT_SCO_MIC;
+        } else if (out_device & AUDIO_DEVICE_OUT_SPEAKER) {
             snd_device = SND_DEVICE_IN_SPEAKER_MIC_AEC;
-            
-            if (out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
-                snd_device = SND_DEVICE_IN_HEADSET_MIC_AEC;
-            } else if (out_device & AUDIO_DEVICE_OUT_ALL_SCO && adev->bt_sco_ready) {
-                snd_device = SND_DEVICE_IN_BT_SCO_MIC;
-            } else if (out_device & AUDIO_DEVICE_OUT_SPEAKER) {
-                snd_device = SND_DEVICE_IN_SPEAKER_MIC_AEC;
-                /* turn on AEC for VOICE_CALL on SPEAKER out*/
-                active_input->enable_aec = true;
-                /*****************/
-            }
-        } else if (source == AUDIO_SOURCE_CAMCORDER) {
+        }
+        /* turn on AEC for VOICE_CALL on SPEAKER out*/
+        adev->AEC_enable = true;
+        /*****************/
+    } else { /*** other audio mode *************/
+        if (source == AUDIO_SOURCE_CAMCORDER) {
             if (in_device & AUDIO_DEVICE_IN_BUILTIN_MIC ||
                 in_device & AUDIO_DEVICE_IN_BACK_MIC) {
                 snd_device = SND_DEVICE_IN_CAMCORDER_MIC;
@@ -771,7 +748,7 @@ static snd_device_t get_input_snd_device(struct audio_device *adev, audio_device
                 if (snd_device == SND_DEVICE_NONE) {
                     snd_device = SND_DEVICE_IN_VOICE_REC_MIC;
                 }
-            } else if (in_device & AUDIO_DEVICE_IN_WIRED_HEADSET) {
+            } else if ((in_device & AUDIO_DEVICE_IN_WIRED_HEADSET) && adev->hs_pluged) {
                 snd_device = SND_DEVICE_IN_VOICE_REC_HEADSET_MIC;
             } else if (in_device & AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET && adev->bt_sco_ready) {
                 snd_device = SND_DEVICE_IN_BT_SCO_MIC;
@@ -785,7 +762,7 @@ static snd_device_t get_input_snd_device(struct audio_device *adev, audio_device
         if (out_device != AUDIO_DEVICE_NONE) {
             if (out_device & AUDIO_DEVICE_OUT_EARPIECE) {
                 snd_device = SND_DEVICE_IN_EARPIECE_MIC;
-            } else if (out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
+            } else if ((out_device & AUDIO_DEVICE_OUT_WIRED_HEADSET) && adev->hs_pluged) {
                 snd_device = SND_DEVICE_IN_HEADSET_MIC;
             } else if (out_device & AUDIO_DEVICE_OUT_SPEAKER) {
                 snd_device = SND_DEVICE_IN_SPEAKER_MIC;
@@ -798,17 +775,12 @@ static snd_device_t get_input_snd_device(struct audio_device *adev, audio_device
                 ALOGW("%s: Using default voice-rec-mic", __func__);
                 snd_device = SND_DEVICE_IN_VOICE_REC_MIC;
             }
-            if(snd_device != SND_DEVICE_NONE) goto exit;
-        }
-      
-        if ((in_device != AUDIO_DEVICE_NONE) &&
-                !(in_device & AUDIO_DEVICE_IN_VOICE_CALL) &&
-                !(in_device & AUDIO_DEVICE_IN_COMMUNICATION)) {
+        } else if (in_device != AUDIO_DEVICE_NONE) {
             if (in_device & AUDIO_DEVICE_IN_BUILTIN_MIC) {
                 snd_device = SND_DEVICE_IN_EARPIECE_MIC;
             } else if (in_device & AUDIO_DEVICE_IN_BACK_MIC) {
                 snd_device = SND_DEVICE_IN_SPEAKER_MIC;
-            } else if (in_device & AUDIO_DEVICE_IN_WIRED_HEADSET) {
+            } else if ((in_device & AUDIO_DEVICE_IN_WIRED_HEADSET) && adev->hs_pluged) {
                 snd_device = SND_DEVICE_IN_HEADSET_MIC;
             } else if (in_device & AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET && adev->bt_sco_ready) {
                 snd_device = SND_DEVICE_IN_BT_SCO_MIC ;
@@ -819,6 +791,8 @@ static snd_device_t get_input_snd_device(struct audio_device *adev, audio_device
                 ALOGW("%s: Using default earpiece-mic", __func__);
                 snd_device = SND_DEVICE_IN_EARPIECE_MIC;
             }
+        } else if(in_device == AUDIO_DEVICE_NONE) {
+            snd_device = SND_DEVICE_IN_SPEAKER_MIC;
         }
     }
 exit:
@@ -874,6 +848,13 @@ static int enable_snd_device(struct audio_device *adev,
         ALOGV("Request to enable combo device: enable individual devices\n");
         enable_snd_device(adev, uc_info, SND_DEVICE_OUT_SPEAKER);
         enable_snd_device(adev, uc_info, SND_DEVICE_OUT_HEADPHONES);
+        return 0;
+    } else if (snd_device == SND_DEVICE_OUT_SPEAKER_AND_ALL_SCO) {
+        ALOGV("Request to enable combo device: enable individual devices\n");
+        enable_snd_device(adev, uc_info, SND_DEVICE_OUT_SPEAKER);
+        enable_snd_device(adev, uc_info, SND_DEVICE_OUT_BT_SCO);
+        //start_voice_session_bt_sco(adev);
+        //start_voice_session(adev->voice.session);
         return 0;
     }
 
@@ -931,6 +912,12 @@ int disable_snd_device(struct audio_device *adev,
         ALOGV("Request to disable combo device: disable individual devices\n");
         disable_snd_device(adev, uc_info, SND_DEVICE_OUT_SPEAKER);
         disable_snd_device(adev, uc_info, SND_DEVICE_OUT_HEADPHONES);
+        return 0;
+    } else if (snd_device == SND_DEVICE_OUT_SPEAKER_AND_ALL_SCO) {
+        ALOGV("Request to disable combo device: disable individual devices\n");
+        disable_snd_device(adev, uc_info, SND_DEVICE_OUT_SPEAKER);
+        disable_snd_device(adev, uc_info, SND_DEVICE_OUT_BT_SCO);
+        stop_voice_session_bt_sco(adev);
         return 0;
     }
 
@@ -1058,8 +1045,12 @@ static int select_devices(struct audio_device *adev,
      * usecase.
      */
     ALOGV("%s: Now usecase is (%d):1.PCM_PLAYBACK, 2.PCM_CAPTURE, 4.VOICE_CALL, 7.VOICE_COMMUNICATION, 10.PCM_CAPTURE_LOW_LATENCY", __func__, usecase->type);
-    if (usecase->type != VOICE_CALL && adev->voice.in_call) {
-        vc_usecase = get_usecase_from_id(adev, USECASE_VOICE_CALL);
+    if ((usecase->type != VOICE_CALL && adev->voice.in_call)||(usecase->type != VOICE_COMMUNICATION && adev->voip)) {
+        if (adev->voice.in_call)
+            vc_usecase = get_usecase_from_id(adev, USECASE_VOICE_CALL);
+        else
+            vc_usecase = get_usecase_from_id(adev, USECASE_VOIP_CALL);
+
         ALOGV("%s: In Voice call", __func__);
         vc_usecase->devices = active_out->devices;
         if (vc_usecase == NULL) {
@@ -1075,19 +1066,9 @@ static int select_devices(struct audio_device *adev,
         set_voice_session_audio_path(adev->voice.session);
         out_snd_device = get_output_snd_device(adev, usecase->devices);
         in_snd_device = get_input_snd_device(adev, usecase->devices);
-    } else if (adev->voip) { /* for voip communication*/
-        if (adev->bt_sco_ready && adev->out_streaming) {
-            ALOGV("%s: Select VOICE_COMMUNICATION on BT", __func__);
-            usecase->devices = AUDIO_DEVICE_OUT_ALL_SCO;
-        } else {
-            ALOGV("%s: Select VOICE_COMMUNICATION", __func__);
-            usecase->devices = active_out->devices;
-            if (usecase->devices & AUDIO_DEVICE_OUT_ALL_SCO && !adev->bt_sco_ready && !adev->out_streaming){
-                usecase->devices = AUDIO_DEVICE_NONE;
-            }
-        }
-        prepare_voice_session(adev->voice.session, usecase->devices);
-        set_voice_session_audio_path(adev->voice.session);
+    } else if (usecase->type == VOICE_COMMUNICATION) { /* for voip communication*/
+        ALOGV("%s: Select VOICE_COMMUNICATION", __func__);
+        usecase->devices = active_out->devices;
         out_snd_device = get_output_snd_device(adev, usecase->devices);
         in_snd_device = get_input_snd_device(adev, usecase->devices);
     } else if (usecase->type == PCM_PLAYBACK) {
@@ -1168,7 +1149,7 @@ static void stop_voip_call(struct audio_device *adev)
     free(uc_info);
     adev->voip = false;
     
-    select_devices(adev, USECASE_AUDIO_PLAYBACK);
+    //select_devices(adev, USECASE_AUDIO_PLAYBACK);
     
     ALOGV("%s: exit", __func__);
     return;
@@ -1193,7 +1174,6 @@ static int start_voip_call(struct audio_device *adev)
      * for ease of handling devices switching.
      * 
      */
-    adev->voip = true;
 
     if (adev->bt_sco_ready) {
         adev->primary_output->devices = AUDIO_DEVICE_OUT_ALL_SCO;
@@ -1213,11 +1193,14 @@ static int start_voip_call(struct audio_device *adev)
     list_add_tail(&adev->usecase_list, &uc_info->adev_list_node);
 
     select_devices(adev, USECASE_VOIP_CALL);
-/*    
+
+    adev->voip = true;
+    
     if (adev->bt_sco_ready) {
         start_voice_session_bt_sco(adev);
+        //start_voice_session(adev->voice.session);
     }
-    */
+
 exit:
     ALOGV("%s: exit", __func__);
     return ret;
@@ -2165,15 +2148,8 @@ static int stop_input_stream(struct stream_in *in)
     in->standby = true;
     in->stream_opened = false;
     adev->in_streaming = false;
+
     ALOGV("%s: in->standby = true : in->stream_opened = false", __func__);
-/*
-    if (!adev->bt_sco_ready && adev->bt_sco_inuse) {
-        stop_voice_session_bt_sco(adev);
-        if (adev->mode != AUDIO_MODE_IN_COMMUNICATION && adev->voip) {
-            stop_voip_call(adev);
-        }
-    }
-*/
     ALOGV("%s: exit", __func__);
     return 0;
 }
@@ -2267,7 +2243,11 @@ static int start_input_stream(struct stream_in *in)
     }
 
 #if PREPROCESSING_ENABLED
-    if (in->enable_aec && in->echo_reference == NULL) {
+    if (adev->AEC_enable && in->enable_aec){
+        adev->AEC_active = true;
+    }
+
+    if (adev->AEC_active) {
         in->echo_reference = get_echo_reference(adev,
                                                 AUDIO_FORMAT_PCM_16_BIT,
                                                 audio_channel_count_from_in_mask(in->main_channels),
@@ -2467,7 +2447,7 @@ int disable_output_path_l(struct stream_out *out)
     uc_release_pcm_devices(uc_info);
     list_remove(&uc_info->adev_list_node);
     free(uc_info);
-    if (adev->voip) stop_voip_call(adev);
+    if (adev->voip && adev->mode != AUDIO_MODE_IN_COMMUNICATION) stop_voip_call(adev);
     ALOGV("%s: exit", __func__);
 
     return 0;
@@ -2511,16 +2491,19 @@ static int stop_output_stream(struct stream_out *out)
 
     if (do_disable)
         ret = disable_output_path_l(out);
-    /************Out Stream stop and Output Path is disabled*******
-     * So output STANDBY Now.
-     * ************************************************************/
-    out->standby = true;
-    ALOGV("%s: out->standby = true", __func__);
+    if (out->usecase != USECASE_AUDIO_PLAYBACK_OFFLOAD){
+        /************Out Stream stop and Output Path is disabled*******
+        * So output STANDBY Now.
+        * ************************************************************/
+        * So output STANDBY Now.
+        * ************************************************************/
+        out->standby = true;
+
+        ALOGV("%s: out->standby = true", __func__);
+    }
 
     ALOGV("%s: exit: status(%d)", __func__, ret);
     return ret;
-}
-
 static int start_output_stream(struct stream_out *out)
 {
     int ret = 0;
@@ -2550,6 +2533,7 @@ static int start_output_stream(struct stream_out *out)
             goto error_open;
 #if PREPROCESSING_ENABLED
         out->echo_reference = NULL;
+        adev->echo_reference = NULL;
         out->echo_reference_generation = adev->echo_reference_generation;
         if (adev->echo_reference != NULL)
             out->echo_reference = adev->echo_reference;
@@ -2607,6 +2591,7 @@ static int start_voice_call(struct audio_device *adev)
 {
     ALOGV("%s: enter", __func__);
     struct audio_usecase *uc_info;
+    struct stream_in *in = NULL;
     int ret = 0;
 
     uc_info = (struct audio_usecase *)calloc(1, sizeof(struct audio_usecase));
@@ -2636,8 +2621,25 @@ static int start_voice_call(struct audio_device *adev)
     select_devices(adev, USECASE_VOICE_CALL);
 
     start_voice_session(adev->voice.session);
+    
+    if (adev->bt_sco_ready) {
+        /* if start with bt_sco on *
+         * after start voice pcm 
+         * start bt pcm
+         * then restart voice pcm again. */
+        start_voice_session_bt_sco(adev);
+        stop_voice_session(adev->voice.session);
+        start_voice_session(adev->voice.session);
+    }
 
     adev->voice.in_call = true;
+    /* Force in standby ,  wait for recording*/
+    if (!in->standby) {
+        lock_input_stream(in);
+        do_in_standby_l(in);
+        pthread_mutex_unlock(&in->lock);
+    }
+
 exit:
     ALOGV("%s: exit", __func__);
     return ret;
@@ -2754,12 +2756,9 @@ static int do_out_standby_l(struct stream_out *out)
 #if PREPROCESSING_ENABLED
         /* stop writing to echo reference */
         if (out->echo_reference != NULL) {
+            ALOGW("%s: out->echo_reference != NULL", __func__);
             out->echo_reference->write(out->echo_reference, NULL);
-            if (out->echo_reference_generation != adev->echo_reference_generation) {
-                ALOGV("%s: release_echo_reference %p", __func__, out->echo_reference);
-                release_echo_reference(out->echo_reference);
-                out->echo_reference_generation = adev->echo_reference_generation;
-            }
+            put_echo_reference(adev, out->echo_reference);
             out->echo_reference = NULL;
         }
 #endif
@@ -2818,22 +2817,18 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
     struct str_parms *parms;
     char value[32];
     int ret;
-    unsigned int val = 0, pvod = 0;
+    unsigned int val = 0;
+    static unsigned int pvod;
     struct audio_usecase *uc_info;
     bool do_standby = false;
     struct pcm_device *pcm_device;
-#if PREPROCESSING_ENABLED
-    struct stream_in *in = NULL;    /* if non-NULL, then force input to standby */
-    ALOGV("%s: PREPROCESSING_ENABLED!",__func__);
-#endif
+    ALOGV("%s: pvod(%#x)",__func__, pvod);
 
     ALOGV("%s: enter: usecase(%d: %s) kvpairs: %s out->devices(%#x) "
           "adev->mode(%#x)",
           __func__, out->usecase, use_case_table[out->usecase], kvpairs,
           out->devices, adev->mode);
 
-    pvod = out->devices;
-    
     parms = str_parms_create_str(kvpairs);
     ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_ROUTING, value, sizeof(value));
     if (ret >= 0) {
@@ -2850,29 +2845,21 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
         pthread_mutex_lock(&adev->lock_inputs);
         lock_output_stream(out);
         pthread_mutex_lock(&adev->lock);
-#if PREPROCESSING_ENABLED
-        if ((out->devices != val) && (val != 0) && (!out->standby) &&
-            (out->usecase == USECASE_AUDIO_PLAYBACK)) {
-            /* reset active input:
-             *  - to attach the echo reference
-             *  - because a change in output device may change mic settings */
-            if (adev->active_input && (adev->active_input->source == AUDIO_SOURCE_VOICE_COMMUNICATION ||
-                    adev->active_input->source == AUDIO_SOURCE_MIC)) {
-                in = adev->active_input;
-            }
-        }
-#endif
+
         if (val != SND_DEVICE_NONE) {
             out->devices = val;
 
             if ((pvod & val) == 0) {
-                if (adev->mode == AUDIO_MODE_IN_CALL || adev->mode == AUDIO_MODE_IN_COMMUNICATION || adev->voip) {
+                if (adev->mode == AUDIO_MODE_IN_CALL) {
+                    ALOGV("%s: Audio path changed!",__func__);
+                    adev->path_changed = true;
+                }else if ((adev->mode == AUDIO_MODE_IN_COMMUNICATION || adev->voip) && !out->standby) {
                     ALOGV("%s: Audio path changed!",__func__);
                     adev->path_changed = true;
                 }
             }
 
-            if (!out->standby && adev->mode != AUDIO_MODE_IN_CALL) {
+            if (!out->standby && adev->mode != AUDIO_MODE_IN_CALL && adev->mode != AUDIO_MODE_IN_COMMUNICATION && !adev->voip) {
                 ALOGV("%s: Now OUT NOT STANDBY", __func__);
                 uc_info = get_usecase_from_id(adev, out->usecase);
                 if (uc_info == NULL) {
@@ -2896,6 +2883,10 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
                     }
                     select_devices(adev, out->usecase);
                 }
+                if ((out->devices & AUDIO_DEVICE_OUT_ALL_SCO) && !adev->bt_sco_inuse) {
+                    start_voice_session_bt_sco(adev);
+                    //start_voice_session(adev->voice.session);
+                }
             }
             /*************************** SET UP OUTPUT PATH**********************************/
             /* step of when to start  stop and route path is affecting of sound quanlity 
@@ -2912,11 +2903,11 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
                     * we do not get any output.
                     * step order must be this to prevent sound distortion
                     */
-                    /* 2. Stop voice pcm */
+                    /* 1. Stop voice pcm */
                     stop_voice_session(adev->voice.session);
-                    /* 3. Route stream to new device */
+                    /* 2. Route stream to new device */
                     select_devices(adev, USECASE_VOICE_CALL);
-                    /* 1. Turn on / Start SCO pcm */
+                    /* 3. Turn on / Start SCO pcm */
                     ALOGV("%s: BLUETOOTH ACTIVE & Ready!",__func__);
                     ALOGV("%s: CHANGE DEVICES FOR VOICE CALL to BLUETOOTH!",__func__);
                     start_voice_session_bt_sco(adev);
@@ -2936,51 +2927,30 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
                 if ((out->devices & AUDIO_DEVICE_OUT_ALL_SCO)
                     && adev->bt_sco_ready && !adev->bt_sco_inuse) {
                     ALOGV("%s: BLUETOOTH ACTIVE!",__func__);
-                    /* 1. Route stream to new device */
                     ALOGV("%s: CHANGE DEVICES FOR VOIP CALL to BLUETOOTH!",__func__);
-                    //select_devices(adev, USECASE_VOIP_CALL);
+                    /* 1. Route stream to new device */
+                    select_devices(adev, USECASE_VOIP_CALL);
                     /* 2. Turn on / Start SCO pcm then Voice pcm*/
+                    /* 3. Turn on / Start Voice pcm*/
                     ALOGV("%s: Start VOIP CALL over BLUETOOTH!",__func__);
                     start_voice_session_bt_sco(adev);
+                    //start_voice_session(adev->voice.session);
+                } else {
+                    /* 1. Route stream to new device */
+                    select_devices(adev, USECASE_VOIP_CALL);
                 }
                 adev->path_changed = false;
-#if 0                
-            } else if (adev->voip && adev->path_changed && out->standby) {
-                /* in case of out not standby and bt-sco is in used
-                 * out_write() will start/restart it on opening new stream
-                 * just select new devices for this usecase.
-                 */
-                select_devices(adev, USECASE_VOIP_CALL);
-                adev->path_changed = false;
-#endif
-            } else if (adev->voip && !adev->path_changed && !out->standby && adev->bt_sco_active) {
-                /* in case of out not standby and out_write is going on, and bt sco ready to use
-                 * and not start yet, start it hear
-                 */
-                if ((out->devices & AUDIO_DEVICE_OUT_ALL_SCO) && !adev->bt_sco_inuse && adev->bt_sco_ready){
-                    start_voice_session_bt_sco(adev);
-                }
             }
 
             if (!(out->devices & AUDIO_DEVICE_OUT_ALL_SCO) && adev->bt_sco_inuse) {
                 stop_voice_session_bt_sco(adev);
             }
         }
-
         pthread_mutex_unlock(&adev->lock);
         pthread_mutex_unlock(&out->lock);
-#if PREPROCESSING_ENABLED
-        if (in) {
-            /* The lock on adev->lock_inputs prevents input stream from being closed */
-            lock_input_stream(in);
-            pthread_mutex_lock(&adev->lock);
-            LOG_ALWAYS_FATAL_IF(in != adev->active_input);
-            do_in_standby_l(in);
-            pthread_mutex_unlock(&adev->lock);
-            pthread_mutex_unlock(&in->lock);
-        }
-#endif
         pthread_mutex_unlock(&adev->lock_inputs);
+        
+        pvod = out->devices;
     }
 
     amplifier_set_parameters(parms);
@@ -3119,15 +3089,6 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
     }
 #endif
 
-    if (!out->standby && !adev->bt_sco_inuse && adev->bt_sco_ready && adev->mode == AUDIO_MODE_IN_COMMUNICATION) {
-        pthread_mutex_lock(&adev->lock);
-        select_devices(adev, USECASE_VOIP_CALL);
-        if (out->devices & AUDIO_DEVICE_OUT_ALL_SCO){
-            start_voice_session_bt_sco(adev);
-        }
-        pthread_mutex_unlock(&adev->lock);
-    }
-
     if (out->standby && !adev->out_pcm_opened) {
 #if PREPROCESSING_ENABLED
         pthread_mutex_unlock(&out->lock);
@@ -3139,11 +3100,6 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
         ret = start_output_stream(out);
         if (ret == 0) {
             amplifier_output_stream_start(stream, out->usecase == USECASE_AUDIO_PLAYBACK_OFFLOAD);
-        }
-       
-        if (adev->bt_sco_inuse) {
-            /* if bt in use stop to restart on next write*/
-            stop_voice_session_bt_sco(adev);
         }
 
         /* ToDo: If use case is compress offload should return 0 */
@@ -3157,11 +3113,9 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
 
 #if PREPROCESSING_ENABLED
         /* A change in output device may change the microphone selection */
-        if (adev->active_input &&
-            (adev->active_input->source == AUDIO_SOURCE_VOICE_COMMUNICATION ||
-                adev->active_input->source == AUDIO_SOURCE_MIC)) {
-                    in = adev->active_input;
-                    ALOGV("%s: enter:) force_input_standby true", __func__);
+        if (adev->active_input && adev->mode == AUDIO_MODE_IN_COMMUNICATION) {
+                in = adev->active_input;
+                ALOGV("%s: enter:) force_input_standby true", __func__);
         }
 #endif
         pthread_mutex_unlock(&adev->lock);
@@ -3171,6 +3125,16 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
             pthread_mutex_unlock(&adev->lock_inputs);
         }
 #endif
+    }
+    /********************
+     * if bt sco is activated not in AUDIO_MODE_IN_CALL and AUDIO_MODE_IN_COMMUNICATION
+     * start bt pcm
+     *******************/
+    if (out->devices & AUDIO_DEVICE_OUT_ALL_SCO && !adev->bt_sco_inuse && !(adev->mode == AUDIO_MODE_IN_CALL || adev->mode == AUDIO_MODE_IN_COMMUNICATION)){
+        pthread_mutex_lock(&adev->lock);
+        start_voice_session_bt_sco(adev);
+        //start_voice_session(adev->voice.session);
+        pthread_mutex_unlock(&adev->lock);
     }
 
     if (out->usecase == USECASE_AUDIO_PLAYBACK_OFFLOAD) {
@@ -3202,22 +3166,30 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
             pcm_device = node_to_item(node, struct pcm_device, stream_list_node);
             if (pcm_device->pcm) {
 #if PREPROCESSING_ENABLED
-                if (out->echo_reference != NULL) {
-                    struct echo_reference_buffer b;
-                    b.raw = (void *)buffer;
-                    b.frame_count = in_frames;
-
-                    get_playback_delay(out, out_frames, &b);
-                    out->echo_reference->write(out->echo_reference, &b);
+                /* stop taking echo_reference when not in communication mode
+                 * and release all echo reference
+                 */
+                if(adev->mode == AUDIO_MODE_IN_COMMUNICATION){
+                    if (out->echo_reference != NULL && adev->AEC_active) {
+                        struct echo_reference_buffer b;
+                        b.raw = (void *)buffer;
+                        b.frame_count = in_frames;
+                        struct echo_reference_buffer b;
+                        b.raw = (void *)buffer;
+                        b.frame_count = in_frames;
+                        get_playback_delay(out, out_frames, &b);
+                        out->echo_reference->write(out->echo_reference, &b);
+                    } else if (out->echo_reference != NULL && !adev->AEC_active){
+                        out->echo_reference->write(out->echo_reference, NULL);
+                        put_echo_reference(adev, out->echo_reference);
+                        out->echo_reference = NULL;
+                    }
                  }
 #endif
-                ALOGV("%s: writing buffer (%d bytes) to pcm device", __func__, bytes);
+                ALOGVV("%s: writing buffer (%d bytes) to pcm device", __func__, bytes);
                 pcm_device->status = pcm_write(pcm_device->pcm, (void *)buffer, bytes);
                 if (pcm_device->status != 0)
                     ret = pcm_device->status;
-            }
-        }
-        if (ret == 0)
             out->written += bytes / (out->config.channels * sizeof(short));
     }
 
@@ -3230,6 +3202,7 @@ exit:
             if (pcm_device->pcm && pcm_device->status != 0)
                 ALOGE("%s: error %zd - %s", __func__, ret, pcm_get_error(pcm_device->pcm));
         }
+        ALOGV("%s: goto out_standby", __func__);
         out_standby(&out->stream.common);
         struct timespec t = { .tv_sec = 0, .tv_nsec = 0 };
         clock_gettime(CLOCK_MONOTONIC, &t);
@@ -3311,7 +3284,7 @@ static int out_get_next_write_timestamp(const struct audio_stream_out *stream,
 static int out_get_presentation_position(const struct audio_stream_out *stream,
                                    uint64_t *frames, struct timespec *timestamp)
 {
-    ALOGV("%s: Enter:", __func__);
+    ALOGVV("%s: Enter:", __func__);
     struct stream_out *out = (struct stream_out *)stream;
     int ret = -EINVAL;
 
@@ -3354,7 +3327,7 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
 
 done:
     pthread_mutex_unlock(&out->lock);
-    ALOGV("%s: Exit:", __func__);
+    ALOGVV("%s: Exit:", __func__);
     return ret;
 }
 
@@ -3466,6 +3439,7 @@ static int do_in_standby_l(struct stream_in *in)
     int status = 0;
 #if PREPROCESSING_ENABLED
     struct audio_device *adev = in->dev;
+    adev->AEC_active = false;
 #endif
     if (!in->standby) {
 
@@ -3545,6 +3519,9 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
     struct pcm_device *pcm_device;
 
     ALOGV("%s: enter: kvpairs=%s", __func__, kvpairs);
+#if PREPROCESSING_ENABLED
+    ALOGV("%s: PREPROCESSING_ENABLED!",__func__);
+#endif
     parms = str_parms_create_str(kvpairs);
 
     ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_INPUT_SOURCE, value, sizeof(value));
@@ -3590,12 +3567,6 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
             }
         }
     }
-#if 0
-    if (adev->bt_sco_ready && adev->voip && (in->devices & AUDIO_DEVICE_IN_ALL_SCO)){
-        /* recheck again in case of activate in middle of process */
-        if (adev->bt_a2dp_spd && !adev->bt_sco_inuse) start_voice_session_bt_sco(adev);
-    }
-#endif  
     pthread_mutex_unlock(&adev->lock);
     pthread_mutex_unlock(&in->lock);
     pthread_mutex_unlock(&adev->lock_inputs);
@@ -3661,30 +3632,12 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer,
         if (ret == 0) {
             amplifier_input_stream_start(stream);
         }
-
-        if (adev->bt_sco_ready && adev->voip && adev->bt_sco_inuse) {
-            /* restart bt-sco-pcm if out is not in streaming */ 
-            if(!adev->out_streaming && (in->devices & AUDIO_DEVICE_IN_ALL_SCO)){
-                stop_voice_session_bt_sco(adev);
-                usleep(10000);
-                start_voice_session_bt_sco(adev);
-            }
-        }
-
         pthread_mutex_unlock(&adev->lock);
         //pthread_mutex_unlock(&adev->lock_inputs);
 
         if (ret != 0) {
             goto exit;
         }
-    }
-
-    /* start bt-sco pcm if not started*/
-    if (adev->bt_sco_ready && adev->voip && !adev->bt_sco_inuse
-        && (in->devices & AUDIO_DEVICE_IN_ALL_SCO)) {
-        pthread_mutex_lock(&adev->lock);
-        start_voice_session_bt_sco(adev);
-        pthread_mutex_unlock(&adev->lock);
     }
 
     if (!list_empty(&in->pcm_dev_list)) {
@@ -3801,6 +3754,10 @@ static int add_remove_audio_effect(const struct audio_stream *stream,
     status = (*effect)->get_descriptor(effect, &desc);
     if (status != 0)
         return status;
+    /* If AEC in not enable for this input path, no need to continue to add FX_IID_AEC fx*/
+    if (( memcmp(&desc.type, FX_IID_AEC, sizeof(effect_uuid_t)) == 0) && !adev->AEC_enable ){
+        return 0;
+    }
 
     ALOGI("add_remove_audio_effect(), effect type: %08x, enable: %d ", desc.type.timeLow, enable);
 
@@ -3809,9 +3766,9 @@ static int add_remove_audio_effect(const struct audio_stream *stream,
     pthread_mutex_lock(&in->dev->lock);
 #if !PREPROCESSING_ENABLED
     if ((in->source == AUDIO_SOURCE_VOICE_COMMUNICATION) &&
-            in->enable_aec != enable &&
+            adev->AEC_enable != enable &&
             (memcmp(&desc.type, FX_IID_AEC, sizeof(effect_uuid_t)) == 0)) {
-        in->enable_aec = enable;
+        adev->AEC_enable = enable;
         if (!in->standby)
             select_devices(in->dev, in->usecase);
     }
@@ -3820,6 +3777,7 @@ static int add_remove_audio_effect(const struct audio_stream *stream,
         status = -ENOSYS;
         goto exit;
     }
+
     if ( enable == true ) {
         in->preprocessors[in->num_preprocessors].effect_itfe = effect;
         /* add the supported channel of the effect in the channel_configs */
@@ -3866,12 +3824,13 @@ static int add_remove_audio_effect(const struct audio_stream *stream,
         in->enable_aec = enable;
         ALOGV("add_remove_audio_effect(), FX_IID_AEC, enable: %d", enable);
         if (!in->standby) {
-            select_devices(in->dev, in->usecase);
+            //select_devices(in->dev, in->usecase);
             do_in_standby_l(in);
         }
         if (in->enable_aec == true) {
             in_configure_reverse(in);
         }
+        if(!enable) adev->AEC_active = enable;
     }
 exit:
 #endif
@@ -4005,8 +3964,25 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         out->sample_rate = out->config.rate;
         ALOGV("%s: use AUDIO_PLAYBACK",__func__);
     }
-
-    if ((flags & AUDIO_OUTPUT_FLAG_PRIMARY) || (flags & AUDIO_OUTPUT_FLAG_FAST)) {
+/*
+    AUDIO_OUTPUT_FLAG_NONE             = 0x0,
+    AUDIO_OUTPUT_FLAG_DIRECT           = 0x1,
+    AUDIO_OUTPUT_FLAG_PRIMARY          = 0x2,
+    AUDIO_OUTPUT_FLAG_FAST             = 0x4,
+    AUDIO_OUTPUT_FLAG_DEEP_BUFFER      = 0x8,
+    AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD = 0x10,
+    AUDIO_OUTPUT_FLAG_NON_BLOCKING     = 0x20,
+    AUDIO_OUTPUT_FLAG_HW_AV_SYNC       = 0x40,
+    AUDIO_OUTPUT_FLAG_TTS              = 0x80,
+    AUDIO_OUTPUT_FLAG_RAW              = 0x100,
+    AUDIO_OUTPUT_FLAG_SYNC             = 0x200,
+    AUDIO_OUTPUT_FLAG_IEC958_NONAUDIO  = 0x400,
+    AUDIO_OUTPUT_FLAG_DIRECT_PCM       = 0x2000,
+    AUDIO_OUTPUT_FLAG_MMAP_NOIRQ       = 0x4000,
+    AUDIO_OUTPUT_FLAG_VOIP_RX          = 0x8000,
+    AUDIO_OUTPUT_FLAG_INCALL_MUSIC     = 0x10000,
+*/
+    if (flags & AUDIO_OUTPUT_FLAG_PRIMARY) {
         if (adev->primary_output == NULL)
             adev->primary_output = out;
         else {
@@ -4157,20 +4133,19 @@ static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
             ALOGV("%s:: BT_SCO is deactivated", __func__);
         }
     }
-
-    /****************** start voip usecase for bt_sco ***************/
-
-    pthread_mutex_lock(&adev->lock);
-    if (adev->bt_sco_ready) {
-        if (!adev->voip && adev->mode != AUDIO_MODE_IN_CALL) {
-            start_voip_call(adev);
-        }
-    } else {
-        if (adev->voip && adev->mode != AUDIO_MODE_IN_COMMUNICATION){
-            stop_voip_call(adev);
+    /********* Headset ***********************/
+    ret = str_parms_get_str(parms, "connect", value, sizeof(value));
+    if (ret >=0) {
+        if ((strcmp(value, "4") == 0)||(strcmp(value, "8"))) {
+            adev->hs_pluged = true;
         }
     }
-    pthread_mutex_unlock(&adev->lock);
+    ret = str_parms_get_str(parms, "disconnect", value, sizeof(value));
+    if (ret >=0) {
+        if ((strcmp(value, "4") == 0)||(strcmp(value, "8"))) {
+            adev->hs_pluged = false;
+        }
+    }
     
     ret = str_parms_get_str(parms, AUDIO_PARAMETER_KEY_BT_NREC, value, sizeof(value));
     if (ret >= 0) {
@@ -4321,6 +4296,8 @@ static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
     pthread_mutex_lock(&adev->lock);
     if (adev->mode != mode) {
         adev->prev_mode = adev->mode;
+        adev->mode_changed = true;
+        adev->AEC_enable = false;
         ALOGI("%s previous mode = %d", __func__, adev->prev_mode);
         ALOGI("%s mode = %d", __func__, mode);
         if (amplifier_set_mode(mode) != 0) {
@@ -4328,16 +4305,25 @@ static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
         }
         adev->mode = mode;
 
-        if (adev->voice.in_call) stop_voice_call(adev);
         if (adev->voip && adev->mode != AUDIO_MODE_IN_COMMUNICATION) stop_voip_call(adev);
         if (mode == AUDIO_MODE_IN_CALL) {
             ALOGV("%s: START VOICE CALL!",__func__);
+            if(adev->bt_sco_inuse){
+                stop_voice_session_bt_sco(adev);
+                stop_voice_session(adev->voice.session);
+            }
             start_voice_call(adev);
         } else if (mode == AUDIO_MODE_IN_COMMUNICATION) {
+            if(adev->bt_sco_inuse){
+                stop_voice_session_bt_sco(adev);
+                stop_voice_session(adev->voice.session);
+            }
             if(!adev->voip){
                 ALOGV("%s: START VOIP CALL!",__func__);
                 start_voip_call(adev);
             }
+        } else if (adev->voice.in_call) {
+            stop_voice_call(adev);
         }
     }
     pthread_mutex_unlock(&adev->lock);
@@ -4629,11 +4615,13 @@ static int adev_open(const hw_module_t *module, const char *name,
     adev->bt_sco_ready = false;
     adev->bt_a2dp_spd = false;
     adev->bt_hs_ready = false;
+    adev->hs_pluged = false;
     adev->bt_sco_inuse = false;
     adev->voip = false;
     adev->path_changed = false;
     adev->in_pcm_opened = false;
     adev->out_pcm_opened = false;
+    adev->AEC_enable = false;
 
     /* adev->cur_hdmi_channels = 0;  by calloc() */
     adev->snd_dev_ref_cnt = calloc(SND_DEVICE_MAX, sizeof(int));

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "audio_hw_voice_v4"
+#define LOG_TAG "audio_hw_voice_v5"
 #define LOG_NDEBUG 0
 /*#define VERY_VERY_VERBOSE_LOGGING*/
 #ifdef VERY_VERY_VERBOSE_LOGGING
@@ -60,36 +60,26 @@ static struct pcm_config pcm_config_voicecall_wideband = {
     .avail_min = VPCM_AVAILABLE_MIN,
 };
 
-static struct pcm_config pcm_config_voice_sco = {
+static struct pcm_config pcm_config_bt_sco = {
     .channels = SCO_VOICE_CHANNEL_COUNT,
     .rate = SCO_DEFAULT_SAMPLING_RATE,
     .period_size = SCO_PERIOD_SIZE,
     .period_count = SCO_PERIOD_COUNT,
     .format = PCM_FORMAT_S16_LE,
+    .start_threshold = SCO_START_THRESHOLD,
+    .stop_threshold = SCO_STOP_THRESHOLD,
+    .avail_min = SCO_AVAILABLE_MIN,
 };
 
-static struct pcm_config pcm_config_voice_sco_wb = {
+static struct pcm_config pcm_config_bt_sco_wb = {
     .channels = SCO_VOICE_CHANNEL_COUNT,
     .rate = SCO_WB_SAMPLING_RATE,
     .period_size = SCO_PERIOD_SIZE,
     .period_count = SCO_PERIOD_COUNT,
     .format = PCM_FORMAT_S16_LE,
-};
-
-static struct pcm_config pcm_config_voip_sco = {
-    .channels = SCO_VOIP_CHANNEL_COUNT,
-    .rate = SCO_DEFAULT_SAMPLING_RATE,
-    .period_size = SCO_PERIOD_SIZE,
-    .period_count = SCO_PERIOD_COUNT,
-    .format = PCM_FORMAT_S16_LE,
-};
-
-static struct pcm_config pcm_config_voip_sco_wb = {
-    .channels = SCO_VOIP_CHANNEL_COUNT,
-    .rate = SCO_DEFAULT_SAMPLING_RATE,
-    .period_size = SCO_PERIOD_SIZE,
-    .period_count = SCO_PERIOD_COUNT,
-    .format = PCM_FORMAT_S16_LE,
+    .start_threshold = SCO_START_THRESHOLD,
+    .stop_threshold = SCO_STOP_THRESHOLD,
+    .avail_min = SCO_AVAILABLE_MIN,
 };
 
 void set_voice_session_audio_path(struct voice_session *session)
@@ -118,7 +108,7 @@ void set_voice_session_audio_path(struct voice_session *session)
             break;
         default:
             /* if output device isn't supported, use earpiece by default */
-            device_type = SOUND_AUDIO_PATH_EARPIECE;
+            device_type = SOUND_AUDIO_PATH_SPEAKER;
             break;
     }
 
@@ -136,6 +126,10 @@ void prepare_voice_session(struct voice_session *session,
                            audio_devices_t active_out_devices)
 {
     ALOGV("%s: active_out_devices: 0x%x", __func__, active_out_devices);
+
+    if (active_out_devices & AUDIO_DEVICE_OUT_ALL_SCO) {
+        active_out_devices = AUDIO_DEVICE_OUT_ALL_SCO;
+    }
 
     session->out_device = active_out_devices;
 
@@ -194,22 +188,13 @@ void start_voice_session_bt_sco(struct audio_device *adev)
     }
 
     ALOGV("%s: Opening SCO PCMs", __func__);
-    if (adev->mode == AUDIO_MODE_IN_CALL){
-        if (adev->voice.bluetooth_wb) {
-            ALOGV("%s: pcm_config wideband for voice", __func__);
-            voice_sco_config = &pcm_config_voice_sco_wb;
-        } else {
-            ALOGV("%s: pcm_config narrowband for voice", __func__);
-            voice_sco_config = &pcm_config_voice_sco;
-        }
+
+    if (adev->voice.bluetooth_wb && adev->voice.session->wb_amr_type) {
+        ALOGV("%s: pcm_config wideband for voice over bt sco", __func__);
+        voice_sco_config = &pcm_config_bt_sco_wb;
     } else {
-        if (adev->voice.bluetooth_wb) {
-            ALOGV("%s: pcm_config wideband for voip", __func__);
-            voice_sco_config = &pcm_config_voip_sco_wb;
-        } else {
-            ALOGV("%s: pcm_config narrowband for voip", __func__);
-            voice_sco_config = &pcm_config_voip_sco;
-        }
+        ALOGV("%s: pcm_config narrowband for voice over bt sco", __func__);
+        voice_sco_config = &pcm_config_bt_sco;
     }
 
     adev->pcm_sco_rx = pcm_open(SOUND_CARD,
