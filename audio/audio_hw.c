@@ -17,7 +17,7 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "audio_hw_primary_V28.1"
+#define LOG_TAG "audio_hw_primary_V28.0"
 #define LOG_NDEBUG 0
 /*#define VERY_VERY_VERBOSE_LOGGING*/
 #ifdef VERY_VERY_VERBOSE_LOGGING
@@ -853,8 +853,6 @@ static int enable_snd_device(struct audio_device *adev,
         ALOGV("Request to enable combo device: enable individual devices\n");
         enable_snd_device(adev, uc_info, SND_DEVICE_OUT_SPEAKER);
         enable_snd_device(adev, uc_info, SND_DEVICE_OUT_BT_SCO);
-        //start_voice_session_bt_sco(adev);
-        //start_voice_session(adev->voice.session);
         return 0;
     }
 
@@ -917,7 +915,6 @@ int disable_snd_device(struct audio_device *adev,
         ALOGV("Request to disable combo device: disable individual devices\n");
         disable_snd_device(adev, uc_info, SND_DEVICE_OUT_SPEAKER);
         disable_snd_device(adev, uc_info, SND_DEVICE_OUT_BT_SCO);
-        stop_voice_session_bt_sco(adev);
         return 0;
     }
 
@@ -1198,7 +1195,6 @@ static int start_voip_call(struct audio_device *adev)
     
     if (adev->bt_sco_ready) {
         start_voice_session_bt_sco(adev);
-        //start_voice_session(adev->voice.session);
     }
 
 exit:
@@ -2495,8 +2491,6 @@ static int stop_output_stream(struct stream_out *out)
         /************Out Stream stop and Output Path is disabled*******
         * So output STANDBY Now.
         * ************************************************************/
-        * So output STANDBY Now.
-        * ************************************************************/
         out->standby = true;
 
         ALOGV("%s: out->standby = true", __func__);
@@ -2504,6 +2498,8 @@ static int stop_output_stream(struct stream_out *out)
 
     ALOGV("%s: exit: status(%d)", __func__, ret);
     return ret;
+}
+
 static int start_output_stream(struct stream_out *out)
 {
     int ret = 0;
@@ -2632,7 +2628,6 @@ static int start_voice_call(struct audio_device *adev)
     }
 
     adev->voice.in_call = true;
-
 exit:
     ALOGV("%s: exit", __func__);
     return ret;
@@ -2878,7 +2873,6 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
                 }
                 if ((out->devices & AUDIO_DEVICE_OUT_ALL_SCO) && !adev->bt_sco_inuse) {
                     start_voice_session_bt_sco(adev);
-                    //start_voice_session(adev->voice.session);
                 }
             }
             /*************************** SET UP OUTPUT PATH**********************************/
@@ -2927,7 +2921,6 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
                     /* 3. Turn on / Start Voice pcm*/
                     ALOGV("%s: Start VOIP CALL over BLUETOOTH!",__func__);
                     start_voice_session_bt_sco(adev);
-                    //start_voice_session(adev->voice.session);
                 } else {
                     /* 1. Route stream to new device */
                     select_devices(adev, USECASE_VOIP_CALL);
@@ -3126,7 +3119,6 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
     if (out->devices & AUDIO_DEVICE_OUT_ALL_SCO && !adev->bt_sco_inuse && !(adev->mode == AUDIO_MODE_IN_CALL || adev->mode == AUDIO_MODE_IN_COMMUNICATION)){
         pthread_mutex_lock(&adev->lock);
         start_voice_session_bt_sco(adev);
-        //start_voice_session(adev->voice.session);
         pthread_mutex_unlock(&adev->lock);
     }
 
@@ -3167,9 +3159,6 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
                         struct echo_reference_buffer b;
                         b.raw = (void *)buffer;
                         b.frame_count = in_frames;
-                        struct echo_reference_buffer b;
-                        b.raw = (void *)buffer;
-                        b.frame_count = in_frames;
                         get_playback_delay(out, out_frames, &b);
                         out->echo_reference->write(out->echo_reference, &b);
                     } else if (out->echo_reference != NULL && !adev->AEC_active){
@@ -3183,6 +3172,9 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
                 pcm_device->status = pcm_write(pcm_device->pcm, (void *)buffer, bytes);
                 if (pcm_device->status != 0)
                     ret = pcm_device->status;
+            }
+        }
+        if (ret == 0)
             out->written += bytes / (out->config.channels * sizeof(short));
     }
 
